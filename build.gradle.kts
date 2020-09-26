@@ -413,6 +413,27 @@ tasks.withType<Test>().configureEach {
     configure<JacocoTaskExtension> {
         isEnabled = project.hasProperty("codecoverage")
     }
+tasks.withType<ShadowJar> {
+    isZip64 = true
+    relocate("""com.google.common""", """importer.com.google.common""")
+    relocate("io.netty", "importer.io.netty)
+    mergeServiceFiles()
+    minimize()
+    logger.error("Test")
+    logger.error(archiveFileName.get())
+    logger.error(getArchivePath().getPath())
+    logger.error(archiveClassifier.get())
+    dependencies {
+        exclude(dependency("org.slf4j:slf4j-api:1.7.25"))
+        exclude(dependency("org.lz4:lz4-java:1.7.1"))
+        exclude(dependency("org.slf4j:log4j-over-slf4j:1.7.25"))
+        exclude(dependency("com.fasterxml.jackson.core:jackson-core:2.9.5"))
+        exclude(dependency("com.fasterxml.jackson.core:jackson-databind:2.9.5"))
+        exclude(dependency("com.fasterxml.jackson.core:jackson-annotations:2.9.5"))
+//        exclude(dependency("io.netty:netty-all:4.1.37.Final"))
+//        exclude(dependency("io.netty:netty-tcnative-boringssl-static:2.0.25.Final"))
+        exclude(dependency("com.datastax.cassandra:cassandra-driver-core:3.6.0:shaded"))
+    }
 }
 
 /**
@@ -478,12 +499,12 @@ tasks.configureEach<Test>("testUnit", "test", "testLong", "testBurn", "testMemor
     filter.isFailOnNoMatchingTests = false
 }
 
-tasks.register<DefaultTask>("testAll") {
-    group = "verification"
-    description = "Run all test* tasks"
-
-    dependsOn(tasks.withType(Test::class))
-}
+//tasks.register<DefaultTask>("testAll") {
+//    group = "verification"
+//    description = "Run all test* tasks"
+//
+//    dependsOn(tasks.withType(Test::class))
+//}
 
 /**
  * Common configuration for all test-tasks
@@ -792,30 +813,6 @@ dtests {
     register("3.0")
     register("3.11")
 }
-val dtestJar by tasks.registering(ShadowJar::class) {
-    dependsOn(tasks.named("classes"),
-            tasks.named("testClasses"),
-            tasks.named("processResources"),
-            tasks.named("processTestResources"))
-
-    destinationDirectory.set(project.buildDir)
-    archiveBaseName.set("dtest")
-    archiveVersion.set(project.version.toString().replace("-SNAPSHOT", ""))
-
-    from("build/classes/main") {
-        exclude("compile-command-incr")
-    }
-    from("build/classes/java/test")
-    from("build/classes/java/distributedTest")
-    from("build/resources/main")
-    from("build/resources/distributedTest")
-
-    configurations = listOf(project.configurations.getByName("runtimeClasspath"))
-}
-testDistributed {
-    dependsOn(dtestJar)
-    inputs.file(dtestJar.get().archiveFile)
-}
 
 jar {
     destinationDirectory.fileValue(buildDir)
@@ -908,19 +905,6 @@ distributions {
                         "audit/**",
                         "*.log")
             }
-        }
-    }
-}
-
-tasks.named<RatTask>("rat") {
-    exclude(file(".rat-excludes").readLines().filter { l -> l.isNotEmpty() })
-    doLast {
-        copy {
-            from(reportDir) {
-                include("rat-report.txt")
-                rename { "rat-report.log" }
-            }
-            into(buildDir)
         }
     }
 }
