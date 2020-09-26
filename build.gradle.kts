@@ -416,7 +416,7 @@ tasks.withType<Test>().configureEach {
 tasks.withType<ShadowJar> {
     isZip64 = true
     relocate("""com.google.common""", """importer.com.google.common""")
-    relocate("io.netty", "importer.io.netty)
+    relocate("io.netty", "importer.io.netty")
     mergeServiceFiles()
     minimize()
     logger.error("Test")
