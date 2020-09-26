@@ -30,11 +30,14 @@ import com.google.common.io.Files;
 import static org.junit.Assert.*;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+@Category(Unit.class)
 public class CompressorTest
 {
     ICompressor compressor;
@@ -43,7 +46,8 @@ public class CompressorTest
             LZ4Compressor.create(Collections.<String, String>emptyMap()),
             DeflateCompressor.create(Collections.<String, String>emptyMap()),
             SnappyCompressor.create(Collections.<String, String>emptyMap()),
-            ZstdCompressor.create(Collections.emptyMap())
+            ZstdCompressor.create(Collections.emptyMap()),
+            NoopCompressor.create(Collections.emptyMap())
     };
 
     @Test
@@ -182,6 +186,13 @@ public class CompressorTest
     public void testZstdByteBuffers() throws IOException
     {
         compressor = ZstdCompressor.create(Collections.<String, String>emptyMap());
+        testByteBuffers();
+    }
+
+    @Test
+    public void testNoopByteBuffers() throws IOException
+    {
+        compressor = NoopCompressor.create(Collections.emptyMap());
         testByteBuffers();
     }
 

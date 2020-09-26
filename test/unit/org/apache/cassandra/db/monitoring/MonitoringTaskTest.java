@@ -31,7 +31,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.After;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ApproximateTime;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -42,6 +44,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class MonitoringTaskTest
 {
     private static final long timeout = MILLISECONDS.toNanos(100);
@@ -276,7 +279,7 @@ public class MonitoringTaskTest
         }
 
         executorService.shutdown();
-        assertTrue(executorService.awaitTermination(30, TimeUnit.SECONDS));
+        assertTrue(executorService.awaitTermination(1, TimeUnit.MINUTES));
         assertEquals(opCount, operations.size());
 
         waitForOperationsToComplete(operations);

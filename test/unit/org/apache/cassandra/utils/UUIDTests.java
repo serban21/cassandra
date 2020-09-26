@@ -29,15 +29,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.common.collect.Sets;
 
 import org.apache.cassandra.db.marshal.TimeUUIDType;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.UUIDGen;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
+import org.junit.experimental.categories.Category;
 
 
+@Category(Unit.class)
 public class UUIDTests
 {
     @Test
@@ -135,7 +139,7 @@ public class UUIDTests
                 es.execute(task);
             }
             es.shutdown();
-            es.awaitTermination(10, TimeUnit.MINUTES);
+            Assert.assertTrue(es.awaitTermination(1, TimeUnit.MINUTES));
 
             assert !failedOrdering.get();
             assert !failedDuplicate.get();

@@ -57,13 +57,11 @@ public class BulkLoader
                 options.directory.getAbsoluteFile(),
                 new ExternalClient(
                         options.hosts,
-                        options.nativePort,
                         options.storagePort,
                         options.authProvider,
                         options.sslStoragePort,
                         options.serverEncOptions,
-                        buildSSLOptions(options.clientEncOptions),
-                        options.allowServerPortDiscovery),
+                        buildSSLOptions(options.clientEncOptions)),
                         handler,
                         options.connectionsPerHost,
                         options.targetKeyspace);
@@ -275,15 +273,13 @@ public class BulkLoader
         private final EncryptionOptions.ServerEncryptionOptions serverEncOptions;
 
         public ExternalClient(Set<InetSocketAddress> hosts,
-                              int nativePort,
                               int storagePort,
                               AuthProvider authProvider,
                               int sslStoragePort,
                               EncryptionOptions.ServerEncryptionOptions serverEncryptionOptions,
-                              SSLOptions sslOptions,
-                              boolean allowServerPortDiscovery)
+                              SSLOptions sslOptions)
         {
-            super(hosts, nativePort, storagePort, authProvider, sslOptions, allowServerPortDiscovery);
+            super(hosts, storagePort, authProvider, sslOptions);
             this.sslStoragePort = sslStoragePort;
             serverEncOptions = serverEncryptionOptions;
         }
@@ -309,6 +305,23 @@ public class BulkLoader
         {
             Option option = new Option(opt, longOpt, true, description);
             option.setArgName(argName);
+
+            return addOption(option);
+        }
+
+        /**
+         * Add option with argument and argument name that accepts being defined multiple times as a list
+         * @param opt shortcut for option name
+         * @param longOpt complete option name
+         * @param argName argument name
+         * @param description description of the option
+         * @return updated Options object
+         */
+        public Options addOptionList(String opt, String longOpt, String argName, String description)
+        {
+            Option option = new Option(opt, longOpt, true, description);
+            option.setArgName(argName);
+            option.setArgs(Option.UNLIMITED_VALUES);
 
             return addOption(option);
         }

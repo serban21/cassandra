@@ -24,14 +24,16 @@ import java.util.Iterator;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.db.Digest;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.repair.TreeResponse;
-import org.apache.cassandra.utils.HashingUtils;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.MerkleTree;
 import org.apache.cassandra.utils.MerkleTrees;
 import org.apache.cassandra.utils.MerkleTreesTest;
@@ -39,11 +41,14 @@ import org.apache.cassandra.utils.MerkleTreesTest;
 import static junit.framework.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class DifferenceHolderTest
 {
     private static byte[] digest(String string)
     {
-        return HashingUtils.newMessageDigest("SHA-256").digest(string.getBytes());
+        return Digest.forValidator()
+                     .update(string.getBytes(), 0, string.getBytes().length)
+                     .digest();
     }
 
     @Test

@@ -1,7 +1,7 @@
 # Cassandra storage config YAML
 
 # NOTE:
-#   See http://wiki.apache.org/cassandra/StorageConfiguration for
+#   See https://cassandra.apache.org/doc/latest/configuration/ for
 #   full explanations of configuration directives
 # /NOTE
 
@@ -20,8 +20,6 @@ cluster_name: 'Test Cluster'
 # Specifying initial_token will override this setting on the node's initial start,
 # on subsequent starts, this setting will apply even if initial token is set.
 #
-# If you already have a cluster with 1 token per node, and wish to migrate to 
-# multiple tokens per node, see http://wiki.apache.org/cassandra/Operations
 num_tokens: 256
 
 # Triggers automatic allocation of num_tokens tokens for this node. The allocation
@@ -47,7 +45,6 @@ num_tokens: 256
 # that do not have vnodes enabled.
 # initial_token:
 
-# See http://wiki.apache.org/cassandra/HintedHandoff
 # May either be "true" or "false" to enable globally
 hinted_handoff_enabled: true
 
@@ -424,6 +421,21 @@ commitlog_segment_size_in_mb: 32
 #   - class_name: LZ4Compressor
 #     parameters:
 #         -
+
+# Compression to apply to SSTables as they flush for compressed tables.
+# Note that tables without compression enabled do not respect this flag.
+#
+# As high ratio compressors like LZ4HC, Zstd, and Deflate can potentially
+# block flushes for too long, the default is to flush with a known fast
+# compressor in those cases. Options are:
+#
+# none : Flush without compressing blocks but while still doing checksums.
+# fast : Flush with a fast compressor. If the table is already using a
+#        fast compressor that compressor is used.
+# table: Always flush with the same compressor that the table uses. This
+#        was the pre 4.0 behavior.
+#
+# flush_compression: fast
 
 # any class that implements the SeedProvider interface and has a
 # constructor that takes a Map<String, String> of parameters will do.
@@ -923,9 +935,9 @@ slow_query_log_timeout_in_ms: 500
 # under overload conditions we will waste that much extra time processing 
 # already-timed-out requests.
 #
-# Warning: before enabling this property make sure to ntp is installed
-# and the times are synchronized between the nodes.
-cross_node_timeout: false
+# Warning: It is generally assumed that users have setup NTP on their clusters, and that clocks are modestly in sync, 
+# since this is a requirement for general correctness of last write wins.
+#cross_node_timeout: true
 
 # Set keep-alive period for streaming
 # This node will send a keep-alive message periodically with this period.
@@ -1259,11 +1271,6 @@ back_pressure_strategy:
 # each write which may be lower in order to facilitate availability.
 # ideal_consistency_level: EACH_QUORUM
 
-# Path to write full query log data to when the full query log is enabled
-# The full query log will recrusively delete the contents of this path at
-# times. Don't place links in this directory to other parts of the filesystem.
-#full_query_log_dir: /tmp/cassandrafullquerylog
-
 # Automatically upgrade sstables after upgrade - if there is no ordinary compaction to do, the
 # oldest non-upgraded sstable will get upgraded to the latest version
 # automatic_sstable_upgrade: false
@@ -1274,7 +1281,8 @@ back_pressure_strategy:
 # on audit_logging for full details about the various configuration options.
 audit_logging_options:
     enabled: false
-    logger: BinAuditLogger
+    logger:
+      - class_name: BinAuditLogger
     # audit_logs_dir:
     # included_keyspaces:
     # excluded_keyspaces: system, system_schema, system_virtual_schema

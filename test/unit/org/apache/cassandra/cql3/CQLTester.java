@@ -46,7 +46,10 @@ import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.ResultSet;
 
 import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.audit.AuditLogManager;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
+import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
+import org.apache.cassandra.db.virtual.VirtualSchemaKeyspace;
 import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.locator.InetAddressAndPort;
@@ -88,6 +91,15 @@ public abstract class CQLTester
 {
     protected static final Logger logger = LoggerFactory.getLogger(CQLTester.class);
 
+    static
+    {
+        if (Boolean.getBoolean("cassandra.test.pureunit"))
+        {
+            logger.error("Must not use CQLTester in pure unit-tests (system property cassandra.test.pureunit={})", System.getProperty("cassandra.test.pureunit"));
+            throw new IllegalStateException("Must not use CQLTester in pure unit-tests");
+        }
+    }
+
     public static final String KEYSPACE = "cql_test_keyspace";
     public static final String KEYSPACE_PER_TEST = "cql_test_keyspace_alt";
     protected static final boolean USE_PREPARED_VALUES = Boolean.valueOf(System.getProperty("cassandra.test.use_prepared", "true"));
@@ -100,8 +112,8 @@ public abstract class CQLTester
     public static final String RACK1 = "rack1";
 
     private static org.apache.cassandra.transport.Server server;
-    protected static final int nativePort;
-    protected static final InetAddress nativeAddr;
+    protected static int nativePort;
+    protected static InetAddress nativeAddr;
     protected static final Set<InetAddressAndPort> remoteAddrs = new HashSet<>();
     private static final Map<ProtocolVersion, Cluster> clusters = new HashMap<>();
     protected static final Map<ProtocolVersion, Session> sessions = new HashMap<>();
@@ -147,8 +159,6 @@ public abstract class CQLTester
             }
         }
 
-        nativeAddr = InetAddress.getLoopbackAddress();
-
         // Register an EndpointSnitch which returns fixed values for test.
         DatabaseDescriptor.setEndpointSnitch(new AbstractEndpointSnitch()
         {
@@ -160,19 +170,6 @@ public abstract class CQLTester
             }
             @Override public int compareEndpoints(InetAddressAndPort target, Replica a1, Replica a2) { return 0; }
         });
-
-        try
-        {
-            try (ServerSocket serverSocket = new ServerSocket(0))
-            {
-                nativePort = serverSocket.getLocalPort();
-            }
-            Thread.sleep(250);
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException(e);
-        }
     }
 
     public static ResultMessage lastSchemaChangeResult;
@@ -199,7 +196,13 @@ public abstract class CQLTester
             return;
 
         DatabaseDescriptor.daemonInitialization();
+
+        // Use native-transport address and port from OffsetAwareConfigurationLoader
+        nativeAddr = DatabaseDescriptor.getRpcAddress();
+        nativePort = DatabaseDescriptor.getNativeTransportPort();
+
         DatabaseDescriptor.setTransientReplicationEnabledUnsafe(true);
+        CommitLog.instance.start();
 
         // Cleanup first
         try
@@ -233,12 +236,14 @@ public abstract class CQLTester
 
         Keyspace.setInitialized();
         SystemKeyspace.persistLocalMetadata();
+        AuditLogManager.instance.initialize();
         isServerPrepared = true;
     }
 
     public static void cleanupAndLeaveDirs() throws IOException
     {
         // We need to stop and unmap all CLS instances prior to cleanup() or we'll get failures on Windows.
+        CommitLog.instance.start();
         CommitLog.instance.stopUnsafe(true);
         mkdirs();
         cleanup();
@@ -401,6 +406,8 @@ public abstract class CQLTester
             return;
 
         SystemKeyspace.finishStartup();
+        VirtualKeyspaceRegistry.instance.register(VirtualSchemaKeyspace.instance);
+
         StorageService.instance.initServer();
         SchemaLoader.startGossiper();
 
@@ -417,6 +424,7 @@ public abstract class CQLTester
                                              .withoutJMXReporting()
                                              .addContactPoints(nativeAddr)
                                              .withClusterName("Test Cluster")
+                                             .withSocketOptions(new SocketOptions().setReadTimeoutMillis(30_000))
                                              .withPort(nativePort);
 
             if (version.isBeta())
@@ -643,6 +651,20 @@ public abstract class CQLTester
         return currentKeyspace;
     }
 
+    protected void alterKeyspace(String query)
+    {
+        String fullQuery = String.format(query, currentKeyspace());
+        logger.info(fullQuery);
+        schemaChange(fullQuery);
+    }
+ 
+    protected void alterKeyspaceMayThrow(String query) throws Throwable
+    {
+        String fullQuery = String.format(query, currentKeyspace());
+        logger.info(fullQuery);
+        QueryProcessor.executeOnceInternal(fullQuery);
+    }
+    
     protected String createKeyspaceName()
     {
         String currentKeyspace = "keyspace_" + seqNumber.getAndIncrement();
@@ -1691,7 +1713,7 @@ public abstract class CQLTester
         return m;
     }
 
-    protected com.datastax.driver.core.TupleType tupleTypeOf(ProtocolVersion protocolVersion, DataType...types)
+    protected com.datastax.driver.core.TupleType tupleTypeOf(ProtocolVersion protocolVersion, com.datastax.driver.core.DataType...types)
     {
         requireNetwork();
         return clusters.get(protocolVersion).getMetadata().newTupleType(types);

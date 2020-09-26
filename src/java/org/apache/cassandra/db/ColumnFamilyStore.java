@@ -91,6 +91,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static org.apache.cassandra.utils.ExecutorUtils.awaitTermination;
 import static org.apache.cassandra.utils.ExecutorUtils.shutdown;
 import static org.apache.cassandra.utils.Throwables.maybeFail;
+import static org.apache.cassandra.utils.Throwables.merge;
 
 public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 {
@@ -105,7 +106,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     have that many flushes going at the same time.
     */
     private static final ExecutorService flushExecutor = new JMXEnabledThreadPoolExecutor(DatabaseDescriptor.getFlushWriters(),
-                                                                                          StageManager.KEEPALIVE,
+                                                                                          Stage.KEEP_ALIVE_SECONDS,
                                                                                           TimeUnit.SECONDS,
                                                                                           new LinkedBlockingQueue<Runnable>(),
                                                                                           new NamedThreadFactory("MemtableFlushWriter"),
@@ -118,7 +119,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         for (int i = 0; i < DatabaseDescriptor.getAllDataFileLocations().length; i++)
         {
             perDiskflushExecutors[i] = new JMXEnabledThreadPoolExecutor(DatabaseDescriptor.getFlushWriters(),
-                                                                        StageManager.KEEPALIVE,
+                                                                        Stage.KEEP_ALIVE_SECONDS,
                                                                         TimeUnit.SECONDS,
                                                                         new LinkedBlockingQueue<Runnable>(),
                                                                         new NamedThreadFactory("PerDiskMemtableFlushWriter_"+i),
@@ -128,14 +129,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     // post-flush executor is single threaded to provide guarantee that any flush Future on a CF will never return until prior flushes have completed
     private static final ExecutorService postFlushExecutor = new JMXEnabledThreadPoolExecutor(1,
-                                                                                              StageManager.KEEPALIVE,
+                                                                                              Stage.KEEP_ALIVE_SECONDS,
                                                                                               TimeUnit.SECONDS,
                                                                                               new LinkedBlockingQueue<Runnable>(),
                                                                                               new NamedThreadFactory("MemtablePostFlush"),
                                                                                               "internal");
 
     private static final ExecutorService reclaimExecutor = new JMXEnabledThreadPoolExecutor(1,
-                                                                                            StageManager.KEEPALIVE,
+                                                                                            Stage.KEEP_ALIVE_SECONDS,
                                                                                             TimeUnit.SECONDS,
                                                                                             new LinkedBlockingQueue<Runnable>(),
                                                                                             new NamedThreadFactory("MemtableReclaimMemory"),
@@ -634,7 +635,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             {
                 cleanedDirectories.add(directory);
                 for (File tmpFile : desc.getTemporaryFiles())
+                {
+                    logger.info("Removing unfinished temporary file {}", tmpFile);
                     tmpFile.delete();
+                }
             }
 
             File dataFile = new File(desc.filenameFor(Component.DATA));
@@ -842,7 +846,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             offHeapTotal += allocator.offHeap().owns();
         }
 
-        logger.debug("Enqueuing flush of {}: {}",
+        logger.info("Enqueuing flush of {}: {}",
                      name,
                      String.format("%s (%.0f%%) on-heap, %s (%.0f%%) off-heap",
                                    FBUtilities.prettyPrintMemory(onHeapTotal),
@@ -1232,7 +1236,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 float flushingOffHeap = Memtable.MEMORY_POOL.offHeap.reclaimingRatio();
                 float thisOnHeap = largest.getAllocator().onHeap().ownershipRatio();
                 float thisOffHeap = largest.getAllocator().offHeap().ownershipRatio();
-                logger.debug("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
+                logger.info("Flushing largest {} to free up room. Used total: {}, live: {}, flushing: {}, this: {}",
                             largest.cfs, ratio(usedOnHeap, usedOffHeap), ratio(liveOnHeap, liveOffHeap),
                             ratio(flushingOnHeap, flushingOffHeap), ratio(thisOnHeap, thisOffHeap));
                 largest.cfs.switchMemtableIfCurrent(largest);
@@ -2203,9 +2207,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                              ? Iterables.concat(toInterruptFor, viewManager.allViewsCfs())
                              : toInterruptFor;
 
-            for (ColumnFamilyStore cfs : toInterruptFor)
-                cfs.getCompactionStrategyManager().pause();
-            try
+            try (CompactionManager.CompactionPauser pause = CompactionManager.instance.pauseGlobalCompaction();
+                 CompactionManager.CompactionPauser pausedStrategies = pauseCompactionStrategies(toInterruptFor))
             {
                 // interrupt in-progress compactions
                 CompactionManager.instance.interruptCompactionForCFs(toInterruptFor, sstablesPredicate, interruptValidation);
@@ -2232,12 +2235,43 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                     throw new RuntimeException(e);
                 }
             }
-            finally
+        }
+    }
+
+    private static CompactionManager.CompactionPauser pauseCompactionStrategies(Iterable<ColumnFamilyStore> toPause)
+    {
+        ArrayList<ColumnFamilyStore> successfullyPaused = new ArrayList<>();
+        try
+        {
+            for (ColumnFamilyStore cfs : toPause)
             {
-                for (ColumnFamilyStore cfs : toInterruptFor)
-                    cfs.getCompactionStrategyManager().resume();
+                successfullyPaused.ensureCapacity(successfullyPaused.size() + 1); // to avoid OOM:ing after pausing the strategies
+                cfs.getCompactionStrategyManager().pause();
+                successfullyPaused.add(cfs);
+            }
+            return () -> maybeFail(resumeAll(null, toPause));
+        }
+        catch (Throwable t)
+        {
+            resumeAll(t, successfullyPaused);
+            throw t;
+        }
+    }
+
+    private static Throwable resumeAll(Throwable accumulate, Iterable<ColumnFamilyStore> cfss)
+    {
+        for (ColumnFamilyStore cfs : cfss)
+        {
+            try
+            {
+                cfs.getCompactionStrategyManager().resume();
+            }
+            catch (Throwable t)
+            {
+                accumulate = merge(accumulate, t);
             }
         }
+        return accumulate;
     }
 
     public LifecycleTransaction markAllCompacting(final OperationType operationType)
